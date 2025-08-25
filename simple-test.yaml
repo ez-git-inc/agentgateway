@@ -1,0 +1,14 @@
+# Simple test configuration
+binds:
+- port: 3000
+  listeners:
+  - protocol: HTTP
+    routes:
+    - name: test
+      matches:
+      - path:
+          pathPrefix: /test
+      policies:
+        directResponse:
+          body: "Hello World"
+          status: 200

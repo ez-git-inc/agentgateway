@@ -1,0 +1,31 @@
+# Minimal configuration for agentgateway
+# This config just starts the gateway with basic admin endpoints
+
+config:
+  # Admin server configuration
+  adminAddr: "127.0.0.1:15000"
+  statsAddr: "127.0.0.1:15001"
+  readinessAddr: "127.0.0.1:15002"
+
+# Basic bind configuration
+binds:
+- port: 3000
+  listeners:
+  - protocol: HTTP
+    routes:
+    - name: health-check
+      matches:
+      - path:
+          pathPrefix: /health
+      policies:
+        directResponse:
+          body: "AgentGateway is running!"
+          status: 200
+    - name: default
+      matches:
+      - path:
+          pathPrefix: /
+      policies:
+        directResponse:
+          body: "Welcome to AgentGateway! This is a minimal configuration."
+          status: 200

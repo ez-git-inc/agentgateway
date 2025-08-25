@@ -1,0 +1,81 @@
+# Demo configuration for agentgateway
+# This shows various features including routing, policies, and responses
+
+config:
+  adminAddr: "127.0.0.1:15000"
+  statsAddr: "127.0.0.1:15001"
+  readinessAddr: "127.0.0.1:15002"
+
+# Multiple bind configurations to show different capabilities
+binds:
+- port: 3000
+  listeners:
+  - protocol: HTTP
+    routes:
+    - name: health-check
+      matches:
+      - path:
+          pathPrefix: /health
+      policies:
+        directResponse:
+          body: "AgentGateway is running and healthy!"
+          status: 200
+    
+    - name: api-v1
+      matches:
+      - path:
+          pathPrefix: /api/v1
+      policies:
+        cors:
+          allowOrigins: ["*"]
+          allowMethods: ["GET", "POST", "PUT", "DELETE"]
+          allowHeaders: ["content-type", "authorization"]
+        requestHeaderModifier:
+          add:
+            x-api-version: "v1"
+            x-gateway: "agentgateway"
+        directResponse:
+          body: '{"message": "API v1 endpoint", "status": "active", "gateway": "agentgateway"}'
+          status: 200
+    
+    - name: echo-service
+      matches:
+      - path:
+          pathPrefix: /echo
+      policies:
+        directResponse:
+          body: "Echo service is working! This demonstrates direct response capability."
+          status: 200
+    
+    - name: status-codes
+      matches:
+      - path:
+          pathPrefix: /status
+        query:
+        - name: code
+          value:
+            regex: "[0-9]{3}"
+      policies:
+        directResponse:
+          body: "Custom status response"
+          status: 200
+    
+    - name: default-route
+      matches:
+      - path:
+          pathPrefix: /
+      policies:
+        cors:
+          allowOrigins: ["*"]
+        directResponse:
+          body: |
+            Welcome to AgentGateway Demo!
+            
+            Available endpoints:
+            - /health - Health check
+            - /api/v1 - API v1 endpoint with CORS
+            - /echo - Echo service
+            - /status?code=XXX - Status endpoint
+            
+            This demonstrates the gateway's routing and policy capabilities.
+          status: 200
