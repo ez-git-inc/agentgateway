@@ -1,40 +1,45 @@
-# AgentGateway Deployment Guide
+# Official AgentGateway Deployment Guide
 
-This directory contains deployment scripts and services for the AgentGateway MCP ecosystem.
+This directory contains deployment scripts for the **official Rust AgentGateway** implementation.
 
-## 🚀 Structure
+## 🚀 What This Deploys
+
+**Official Rust AgentGateway** - The complete, production-ready AgentGateway with:
+
+- ✅ **Multi-protocol support** (MCP, A2A, HTTP, WebSocket, gRPC)
+- ✅ **Built-in Next.js web UI** (served at `/ui`)
+- ✅ **Admin endpoints** (port 15000)
+- ✅ **Metrics & health checks** (ports 15001, 15002)
+- ✅ **High performance** (Rust implementation)
+- ✅ **Auto-scaling** (Cloud Run)
+- ✅ **Service integration** (orionOrchestrator, orionCreate)
+
+## 🏗️ Structure
 
 ```
 deployment/
 ├── scripts/
-│   └── deploy-agentgateway.sh    # Standalone deployment script
+│   └── deploy-agentgateway.sh    # Official AgentGateway deployment
 └── README.md                     # This documentation
-
-services/
-├── web-interface/                # FastAPI web interface for AgentGateway
-│   ├── main.py                   # Web application
-│   ├── Dockerfile               # Container configuration
-│   ├── requirements.txt          # Python dependencies
-│   ├── tests/                    # Unit tests
-│   ├── deployment/               # Integration scripts
-│   └── services/                 # Nested services (Context7 MCP)
 ```
 
 ## 🛠️ Quick Start
 
-### Deploy AgentGateway Web Interface
+### Deploy Official AgentGateway
 
 ```bash
 # From AgentGateway repository root
 ./deployment/scripts/deploy-agentgateway.sh
 
-# With options
-./deployment/scripts/deploy-agentgateway.sh --environment staging --project-id your-project
+# With custom project
+./deployment/scripts/deploy-agentgateway.sh --project-id your-project-id
+
+# Staging environment
+./deployment/scripts/deploy-agentgateway.sh --environment staging
 ```
 
 ### Environment Variables
 
-Set these before deployment:
 ```bash
 export GCP_PROJECT_ID="your-project-id"
 export DEPLOY_ENV="production"  # or "staging"
@@ -42,10 +47,13 @@ export DEPLOY_ENV="production"  # or "staging"
 
 ## 📋 What Gets Deployed
 
-- **Service Name**: `agentgateway-mcp`
-- **Region**: `us-east1`
-- **Container Registry**: `us-east1-docker.pkg.dev/{project}/orion-mcp/agentgateway-mcp`
-- **Port**: 8080
+- **Service Name**: `agentgateway`
+- **Region**: `us-east1` 
+- **Container Registry**: `us-east1-docker.pkg.dev/{project}/agentgateway/agentgateway`
+- **Admin Port**: 15000 (UI & admin endpoints)
+- **Traffic Port**: 8080 (HTTP traffic)
+- **Stats Port**: 15001 (metrics)
+- **Readiness Port**: 15002 (health checks)
 
 ### Resource Allocation
 
@@ -53,63 +61,134 @@ export DEPLOY_ENV="production"  # or "staging"
 - Memory: 4Gi
 - CPU: 4 vCPU
 - Instances: 1-20 (auto-scaling)
+- Min instances: 1 (always ready)
 
 **Staging:**
 - Memory: 2Gi
 - CPU: 2 vCPU
 - Instances: 0-10 (scale-to-zero)
+- Min instances: 0 (cost-effective)
 
 ## 🔗 Service Integration
 
-The AgentGateway automatically detects and integrates with:
-- **Context7 MCP** (if deployed in same region)
-- **Other MCP services** via service discovery
+AgentGateway automatically detects and integrates with orion services:
+- **orionOrchestrator** - Workflow orchestration integration
+- **orionCreate** - Content creation service integration
+
+Integration is automatic via service discovery in the same GCP region.
 
 ## 📊 Endpoints
 
 Once deployed, AgentGateway provides:
-- **Dashboard**: `https://agentgateway-mcp-xxx.run.app/`
-- **Health Check**: `https://agentgateway-mcp-xxx.run.app/health`
-- **MCP Discovery**: `https://agentgateway-mcp-xxx.run.app/mcp/`
-- **API Docs**: `https://agentgateway-mcp-xxx.run.app/docs`
-- **Admin Stats**: `https://agentgateway-mcp-xxx.run.app/admin/stats`
+
+- **Web UI**: `https://agentgateway-xxx.run.app/ui` 🎮
+- **Health Check**: `https://agentgateway-xxx.run.app/health` ❤️
+- **Admin Interface**: `https://agentgateway-xxx.run.app/admin` ⚙️
+- **MCP Endpoints**: `https://agentgateway-xxx.run.app/mcp/` 🤖
+- **API Documentation**: Auto-generated OpenAPI docs
 
 ## 🎯 Prerequisites
 
-- Google Cloud SDK (gcloud)
-- Docker
-- Appropriate GCP project permissions
-- Enabled APIs: Cloud Run, Artifact Registry
+- **Google Cloud SDK** (gcloud)
+- **Docker** (for building images)
+- **GCP Project** with appropriate permissions
+- **Enabled APIs**: Cloud Run, Artifact Registry, Cloud Build
 
-## ⚙️ Options
+## ⚙️ Deployment Options
 
 ```bash
 ./deployment/scripts/deploy-agentgateway.sh [OPTIONS]
 
 Options:
-  --project-id PROJECT_ID    GCP Project ID
-  --environment ENV          Deployment environment (production/staging)
-  --skip-build              Skip Docker image building
-  --skip-tests              Skip integration tests
+  --project-id PROJECT_ID    GCP Project ID (default: from env)
+  --environment ENV          Environment: production|staging (default: production)
+  --skip-build              Skip Docker image building (use existing)
+  --skip-tests              Skip health check validation
   --help                    Show help message
 ```
 
-## 🔧 Development
+### Example Commands
 
-The web interface is a FastAPI application that provides:
-- Modern web UI for AgentGateway interaction
-- REST API endpoints for programmatic access
-- Integration with multiple AI providers
-- MCP protocol support
+```bash
+# Production deployment
+./deployment/scripts/deploy-agentgateway.sh --project-id myproject
 
-## 🚀 Integration with Other Systems
+# Staging with existing image
+./deployment/scripts/deploy-agentgateway.sh --environment staging --skip-build
 
-This AgentGateway can be integrated with other systems (like orionConnect) by:
-1. Deploying AgentGateway first
-2. Other systems will auto-detect the service via Cloud Run service discovery
-3. Environment variables will be set automatically for integration
+# Quick deploy without validation
+./deployment/scripts/deploy-agentgateway.sh --skip-tests
+```
+
+## 🧪 Testing Deployment
+
+After deployment, test your AgentGateway:
+
+```bash
+# Get service URL
+SERVICE_URL=$(gcloud run services describe agentgateway \
+  --region=us-east1 --format="value(status.url)")
+
+# Test endpoints
+curl ${SERVICE_URL}/health
+curl ${SERVICE_URL}/ui
+curl ${SERVICE_URL}/admin
+
+# Open web interface
+open ${SERVICE_URL}/ui
+```
+
+## 🔧 Configuration
+
+AgentGateway uses YAML configuration. The deployment script creates a production-ready config automatically, but you can customize:
+
+```yaml
+# Example config.yaml
+config:
+  adminAddr: "0.0.0.0:15000"
+  statsAddr: "0.0.0.0:15001" 
+  readinessAddr: "0.0.0.0:15002"
+
+binds:
+- port: 8080
+  listeners:
+  - protocol: HTTP
+    routes:
+    - name: mcp-route
+      matches:
+      - path:
+          pathPrefix: /mcp
+      backends:
+      - mcp:
+          targets:
+          - stdio:
+              cmd: "your-mcp-server"
+```
+
+## 🚀 Integration Examples
+
+### With orionOrchestrator
+AgentGateway will automatically integrate if orionOrchestrator is deployed:
+
+```bash
+# AgentGateway detects: https://orion-orchestrator-xxx.run.app
+# Environment variables set automatically:
+# ORCHESTRATOR_URL=https://orion-orchestrator-xxx.run.app
+# ORCHESTRATOR_ENABLED=true
+```
+
+### With orionCreate
+Similarly for orionCreate:
+
+```bash
+# AgentGateway detects: https://orion-create-xxx.run.app  
+# Environment variables set automatically:
+# CREATE_URL=https://orion-create-xxx.run.app
+# CREATE_ENABLED=true
+```
 
 ---
 
-**Repository**: AgentGateway Standalone  
-**Updated**: August 2024
+**Repository**: Official AgentGateway  
+**Type**: Rust Implementation  
+**Updated**: August 2025

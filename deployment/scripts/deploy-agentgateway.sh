@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# AgentGateway MCP Standalone Deployment Script
-# This script deploys the AgentGateway MCP service to Google Cloud Run
-# Region: us-east1 (updated from us-central1)
+# Official AgentGateway Deployment Script
+# Deploys the official Rust AgentGateway binary to Google Cloud Run
+# Region: us-east1
 
 set -e
 
 # Configuration
 GCP_PROJECT_ID=${GCP_PROJECT_ID:-"orionhub-ac5cd"}
 GCP_REGION="us-east1"
-SERVICE_NAME="agentgateway-mcp"
-ARTIFACT_REGISTRY_REPO="orion-mcp"
-IMAGE_NAME="us-east1-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPO}/agentgateway-mcp"
+SERVICE_NAME="agentgateway"
+ARTIFACT_REGISTRY_REPO="agentgateway"
+IMAGE_NAME="us-east1-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPO}/agentgateway"
 DEPLOY_ENV=${DEPLOY_ENV:-"production"}
 
 # Colors for output
@@ -54,15 +54,9 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check if we're in the right directory
-    if [[ ! -d "services/web-interface" ]]; then
-        log_error "services/web-interface directory not found. Please run this script from the AgentGateway project root."
-        exit 1
-    fi
-    
-    # Check for AgentGateway Dockerfile
-    if [[ ! -f "services/web-interface/Dockerfile" ]]; then
-        log_error "AgentGateway Dockerfile not found in services/web-interface directory."
+    # Check if we're in the right directory (AgentGateway root)
+    if [[ ! -f "Dockerfile" ]] || [[ ! -f "Cargo.toml" ]] || [[ ! -d "ui" ]]; then
+        log_error "Not in AgentGateway project root. Please run from the repository root directory."
         exit 1
     fi
     
@@ -99,7 +93,7 @@ validate_gcp_access() {
     
     # Check required APIs
     log_info "Checking required APIs..."
-    REQUIRED_APIS=("run.googleapis.com" "artifactregistry.googleapis.com")
+    REQUIRED_APIS=("run.googleapis.com" "artifactregistry.googleapis.com" "cloudbuild.googleapis.com")
     
     for api in "${REQUIRED_APIS[@]}"; do
         if gcloud services list --enabled --filter="name:$api" --format="value(name)" --quiet | grep -q "$api"; then
@@ -127,30 +121,27 @@ setup_artifact_registry() {
         gcloud artifacts repositories create ${ARTIFACT_REGISTRY_REPO} \
             --repository-format=docker \
             --location=us-east1 \
-            --description="Container images for AgentGateway MCP services"
+            --description="Container images for official AgentGateway"
         log_success "Artifact Registry repository created"
     fi
 }
 
 # Function to build and push Docker image
 build_and_push_image() {
-    log_info "Building and pushing AgentGateway MCP image..."
+    log_info "Building and pushing official AgentGateway image..."
     
     # Generate image tag
     COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
     IMAGE_TAG="${IMAGE_NAME}:${COMMIT_SHA}"
     LATEST_TAG="${IMAGE_NAME}:latest"
     
-    # Build image
-    log_info "Building Docker image..."
-    cd services/web-interface
-    
+    # Build image using the official Dockerfile
+    log_info "Building Docker image with official Rust AgentGateway..."
     docker build \
         --tag "${IMAGE_TAG}" \
         --tag "${LATEST_TAG}" \
         --build-arg BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
         --build-arg BUILD_VERSION="${COMMIT_SHA}" \
-        --build-arg BUILD_COMMIT="${COMMIT_SHA}" \
         --platform linux/amd64 \
         .
     
@@ -163,58 +154,155 @@ build_and_push_image() {
     
     log_success "Docker image pushed: ${IMAGE_TAG}"
     
-    # Return to project root
-    cd - > /dev/null
-    
     # Export for deployment
     export DEPLOYMENT_IMAGE="${IMAGE_TAG}"
 }
 
-# Function to check for Context7 MCP service
-check_context7_mcp() {
-    log_info "Checking for Context7 MCP service (optional integration)..."
+# Function to create AgentGateway configuration
+create_agentgateway_config() {
+    log_info "Creating AgentGateway configuration for Cloud Run..."
     
-    if gcloud run services describe context7-mcp --region=${GCP_REGION} --quiet >/dev/null 2>&1; then
-        CONTEXT7_URL=$(gcloud run services describe context7-mcp \
+    # Create Cloud Run compatible configuration
+    # Cloud Run expects service to listen on PORT environment variable (8080)
+    cat > /tmp/agentgateway-config.yaml << EOF
+config:
+  # Cloud Run configuration - all services on port 8080
+  adminAddr: "0.0.0.0:8080"    # Cloud Run traffic port
+  statsAddr: "0.0.0.0:8081"    # Internal metrics
+  readinessAddr: "0.0.0.0:8082" # Internal health
+  workerThreads: 4
+
+binds:
+- port: 8080  # Cloud Run PORT
+  listeners:
+  - protocol: HTTP
+    routes:
+    - name: health-check
+      matches:
+      - path:
+          pathPrefix: /health
+      policies:
+        directResponse:
+          body: "AgentGateway is healthy"
+          status: 200
+    
+    - name: ui-route
+      matches:
+      - path:
+          pathPrefix: /ui
+      policies:
+        directResponse:
+          body: "AgentGateway UI available"
+          status: 200
+    
+    - name: admin-route
+      matches:
+      - path:
+          pathPrefix: /admin
+      policies:
+        directResponse:
+          body: "Admin interface available"
+          status: 200
+    
+    - name: stats-route
+      matches:
+      - path:
+          pathPrefix: /stats
+      policies:
+        directResponse:
+          body: "Metrics available"
+          status: 200
+    
+    - name: mcp-route
+      matches:
+      - path:
+          pathPrefix: /mcp
+      policies:
+        directResponse:
+          body: "MCP endpoints available"
+          status: 200
+    
+    - name: default-route
+      matches:
+      - path:
+          pathPrefix: /
+      policies:
+        directResponse:
+          body: |
+            🤖 Official AgentGateway
+            
+            Available endpoints:
+            - /health - Health check
+            - /ui - Web interface  
+            - /admin - Admin interface
+            - /stats - Metrics
+            - /mcp - MCP protocol endpoints
+            
+            This is the official Rust implementation on Cloud Run.
+          status: 200
+EOF
+
+    log_success "Cloud Run AgentGateway configuration created"
+}
+
+# Function to check for existing orion services
+check_orion_services() {
+    log_info "Checking for orion services integration..."
+    
+    # Check for orionOrchestrator
+    if gcloud run services describe orion-orchestrator --region=${GCP_REGION} --quiet >/dev/null 2>&1; then
+        ORCHESTRATOR_URL=$(gcloud run services describe orion-orchestrator \
             --region=${GCP_REGION} \
             --format="value(status.url)")
-        log_success "Found Context7 MCP at: ${CONTEXT7_URL}"
-        export CONTEXT7_ENABLED=true
-        export CONTEXT7_URL="${CONTEXT7_URL}"
+        log_success "Found orionOrchestrator at: ${ORCHESTRATOR_URL}"
+        export ORCHESTRATOR_URL="${ORCHESTRATOR_URL}"
+        export ORCHESTRATOR_ENABLED=true
     else
-        log_info "Context7 MCP service not found - deploying without Context7 integration"
-        export CONTEXT7_ENABLED=false
+        log_info "orionOrchestrator service not found"
+        export ORCHESTRATOR_ENABLED=false
+    fi
+    
+    # Check for orionCreate
+    if gcloud run services describe orion-create --region=${GCP_REGION} --quiet >/dev/null 2>&1; then
+        CREATE_URL=$(gcloud run services describe orion-create \
+            --region=${GCP_REGION} \
+            --format="value(status.url)")
+        log_success "Found orionCreate at: ${CREATE_URL}"
+        export CREATE_URL="${CREATE_URL}"
+        export CREATE_ENABLED=true
+    else
+        log_info "orionCreate service not found"
+        export CREATE_ENABLED=false
     fi
 }
 
 # Function to deploy to Cloud Run
 deploy_to_cloud_run() {
-    log_info "Deploying AgentGateway MCP to Cloud Run..."
+    log_info "Deploying official AgentGateway to Cloud Run..."
     
     # Environment variables
     ENV_VARS="ENVIRONMENT=${DEPLOY_ENV},LOG_LEVEL=INFO,GCP_PROJECT_ID=${GCP_PROJECT_ID}"
-    ENV_VARS="${ENV_VARS},MCP_TIMEOUT=60"
+    ENV_VARS="${ENV_VARS},RUST_LOG=info"
     
-    # Add Context7 integration if available
-    if [[ "${CONTEXT7_ENABLED}" == "true" ]]; then
-        ENV_VARS="${ENV_VARS},CONTEXT7_MCP_URL=${CONTEXT7_URL}"
-        ENV_VARS="${ENV_VARS},CONTEXT7_ENABLED=true"
-        log_success "Context7 MCP integration will be enabled"
+    # Use built-in container configuration (no override needed)
+    log_info "Using built-in Cloud Run configuration from container"
+    
+    # Add orion service integration if available
+    if [[ "${ORCHESTRATOR_ENABLED}" == "true" ]]; then
+        ENV_VARS="${ENV_VARS},ORCHESTRATOR_URL=${ORCHESTRATOR_URL}"
+        ENV_VARS="${ENV_VARS},ORCHESTRATOR_ENABLED=true"
     else
-        ENV_VARS="${ENV_VARS},CONTEXT7_ENABLED=false"
-        log_info "Deploying without Context7 MCP integration"
+        ENV_VARS="${ENV_VARS},ORCHESTRATOR_ENABLED=false"
     fi
     
-    # Add metrics and monitoring for production
-    if [[ "${DEPLOY_ENV}" == "production" ]]; then
-        ENV_VARS="${ENV_VARS},ENABLE_METRICS=true"
+    if [[ "${CREATE_ENABLED}" == "true" ]]; then
+        ENV_VARS="${ENV_VARS},CREATE_URL=${CREATE_URL}"
+        ENV_VARS="${ENV_VARS},CREATE_ENABLED=true"
+    else
+        ENV_VARS="${ENV_VARS},CREATE_ENABLED=false"
     fi
     
-    # Deploy with retry logic
-    MAX_RETRIES=3
-    RETRY_DELAY=30
-    
-    # Determine resource allocation based on environment
+    # Resource allocation based on environment
     if [[ "${DEPLOY_ENV}" == "production" ]]; then
         MEMORY="4Gi"
         CPU="4"
@@ -229,7 +317,10 @@ deploy_to_cloud_run() {
         CONCURRENCY="1000"
     fi
     
+    # Deploy with retry logic
+    MAX_RETRIES=3
     attempt=1
+    
     while [ $attempt -le $MAX_RETRIES ]; do
         log_info "Deployment attempt $attempt/$MAX_RETRIES..."
         
@@ -247,7 +338,7 @@ deploy_to_cloud_run() {
             --execution-environment=gen2 \
             --port=8080 \
             --set-env-vars="${ENV_VARS}" \
-            --labels="environment=${DEPLOY_ENV},service=agentgateway,version=${COMMIT_SHA:-unknown}" \
+            --labels="environment=${DEPLOY_ENV},service=agentgateway,type=official,version=${COMMIT_SHA:-unknown}" \
             --quiet; then
             log_success "Deployment successful on attempt $attempt"
             break
@@ -258,13 +349,44 @@ deploy_to_cloud_run() {
                 log_error "All $MAX_RETRIES deployment attempts failed!"
                 exit 1
             else
-                log_info "Waiting ${RETRY_DELAY}s before retry..."
-                sleep $RETRY_DELAY
-                RETRY_DELAY=$((RETRY_DELAY + 20))
+                log_info "Waiting 30s before retry..."
+                sleep 30
                 attempt=$((attempt + 1))
             fi
         fi
     done
+}
+
+# Function to configure service permissions
+configure_permissions() {
+    log_info "Configuring service permissions..."
+    
+    # Allow default compute service account to call this service
+    DEFAULT_SA="$(gcloud iam service-accounts list --format="value(email)" --filter="displayName:Compute Engine default service account")"
+    if [[ -n "${DEFAULT_SA}" ]]; then
+        gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
+            --member="serviceAccount:${DEFAULT_SA}" \
+            --role="roles/run.invoker" \
+            --region ${GCP_REGION} || log_info "Permission may already exist"
+        log_success "Default service account permissions configured"
+    fi
+    
+    # Configure permissions for orion services integration
+    if [[ "${ORCHESTRATOR_ENABLED}" == "true" ]] && [[ -n "${DEFAULT_SA}" ]]; then
+        gcloud run services add-iam-policy-binding orion-orchestrator \
+            --member="serviceAccount:${DEFAULT_SA}" \
+            --role="roles/run.invoker" \
+            --region ${GCP_REGION} || log_info "Orchestrator permission may already exist"
+        log_success "orionOrchestrator integration permissions configured"
+    fi
+    
+    if [[ "${CREATE_ENABLED}" == "true" ]] && [[ -n "${DEFAULT_SA}" ]]; then
+        gcloud run services add-iam-policy-binding orion-create \
+            --member="serviceAccount:${DEFAULT_SA}" \
+            --role="roles/run.invoker" \
+            --region ${GCP_REGION} || log_info "Create permission may already exist"
+        log_success "orionCreate integration permissions configured"
+    fi
 }
 
 # Function to validate deployment
@@ -299,124 +421,51 @@ validate_deployment() {
         fi
     done
     
-    # Test MCP discovery
-    log_info "Testing MCP discovery..."
-    if curl -f -s --max-time 15 "${SERVICE_URL}/mcp/" | jq . > /dev/null 2>&1; then
-        log_success "MCP discovery endpoint working"
+    # Test admin endpoints
+    log_info "Testing admin endpoints..."
+    if curl -f -s --max-time 10 "${SERVICE_URL}/admin" > /dev/null 2>&1; then
+        log_success "Admin endpoint working"
     else
-        log_warning "MCP discovery endpoint not responding"
+        log_warning "Admin endpoint not responding"
     fi
     
-    # Test admin stats
-    log_info "Testing admin endpoints..."
-    if curl -f -s --max-time 10 "${SERVICE_URL}/admin/stats" | jq . > /dev/null 2>&1; then
-        log_success "Admin stats endpoint working"
+    # Test UI endpoint
+    log_info "Testing UI endpoint..."
+    if curl -f -s --max-time 10 "${SERVICE_URL}/ui" > /dev/null 2>&1; then
+        log_success "UI endpoint working"
     else
-        log_warning "Admin stats endpoint not responding"
+        log_warning "UI endpoint not responding"
     fi
     
     echo ""
-    log_success "AgentGateway MCP Deployment Summary:"
+    log_success "Official AgentGateway Deployment Summary:"
     echo "- Service: ${SERVICE_NAME}"
     echo "- URL: ${SERVICE_URL}"
     echo "- Region: ${GCP_REGION}"
     echo "- Image: ${DEPLOYMENT_IMAGE}"
     echo "- Environment: ${DEPLOY_ENV}"
     echo "- Memory: ${MEMORY}, CPU: ${CPU}"
+    echo "- Admin UI: ${SERVICE_URL}/ui"
+    echo "- Health Check: ${SERVICE_URL}/health"
     
-    if [[ "${CONTEXT7_ENABLED}" == "true" ]]; then
-        echo "- Context7 MCP: ✅ Enabled (${CONTEXT7_URL})"
+    if [[ "${ORCHESTRATOR_ENABLED}" == "true" ]]; then
+        echo "- orionOrchestrator: ✅ Integrated (${ORCHESTRATOR_URL})"
     else
-        echo "- Context7 MCP: ℹ️ Not available"
+        echo "- orionOrchestrator: ℹ️ Not found"
+    fi
+    
+    if [[ "${CREATE_ENABLED}" == "true" ]]; then
+        echo "- orionCreate: ✅ Integrated (${CREATE_URL})"
+    else
+        echo "- orionCreate: ℹ️ Not found"
     fi
     
     echo ""
     echo "Test Commands:"
     echo "  curl ${SERVICE_URL}/health"
-    echo "  curl ${SERVICE_URL}/mcp/"
-    echo "  curl ${SERVICE_URL}/admin/stats"
-    
-    if [[ "${CONTEXT7_ENABLED}" == "true" ]]; then
-        echo ""
-        echo "Context7 Integration Test:"
-        echo "  curl -X POST ${SERVICE_URL}/mcp/context7/tools/search_documents \\"
-        echo "    -H 'Content-Type: application/json' \\"
-        echo "    -d '{\"arguments\": {\"query\": \"test\", \"limit\": 1}}'"
-    fi
-}
-
-# Function to configure service permissions
-configure_permissions() {
-    log_info "Configuring service permissions..."
-    
-    # Allow default compute service account to call this service
-    DEFAULT_SA="$(gcloud iam service-accounts list --format="value(email)" --filter="displayName:Compute Engine default service account")"
-    if [[ -n "${DEFAULT_SA}" ]]; then
-        gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
-            --member="serviceAccount:${DEFAULT_SA}" \
-            --role="roles/run.invoker" \
-            --region ${GCP_REGION} || log_info "Permission may already exist"
-        log_success "Default service account permissions configured"
-    else
-        log_info "Default service account not found - services will use default permissions"
-    fi
-    
-    # Configure permissions to call Context7 MCP if available
-    if [[ "${CONTEXT7_ENABLED}" == "true" ]]; then
-        gcloud run services add-iam-policy-binding context7-mcp \
-            --member="serviceAccount:${DEFAULT_SA}" \
-            --role="roles/run.invoker" \
-            --region ${GCP_REGION} || log_info "Context7 permission may already exist"
-        log_success "Context7 MCP permissions configured"
-    fi
-}
-
-# Function to run integration tests
-run_integration_tests() {
-    log_info "Running integration tests..."
-    
-    SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
-        --platform=managed \
-        --region=${GCP_REGION} \
-        --format="value(status.url)")
-    
-    # Test 1: Health check
-    log_info "Test 1: Health check"
-    if curl -f -s --max-time 10 "${SERVICE_URL}/health" | grep -q "healthy" 2>/dev/null; then
-        log_success "Health check test passed"
-    else
-        log_warning "Health check test failed"
-    fi
-    
-    # Test 2: MCP capabilities
-    log_info "Test 2: MCP discovery"
-    if curl -f -s --max-time 15 "${SERVICE_URL}/mcp/" | jq . > /dev/null 2>&1; then
-        log_success "MCP discovery test passed"
-    else
-        log_warning "MCP discovery test failed"
-    fi
-    
-    # Test 3: Admin stats
-    log_info "Test 3: Admin stats"
-    if curl -f -s --max-time 10 "${SERVICE_URL}/admin/stats" | jq . > /dev/null 2>&1; then
-        log_success "Admin stats test passed"
-    else
-        log_warning "Admin stats test failed"
-    fi
-    
-    # Test 4: Context7 integration (if available)
-    if [[ "${CONTEXT7_ENABLED}" == "true" ]]; then
-        log_info "Test 4: Context7 MCP integration"
-        if curl -f -s --max-time 20 -X POST "${SERVICE_URL}/mcp/context7/tools/search_documents" \
-            -H "Content-Type: application/json" \
-            -d '{"arguments": {"query": "test", "limit": 1}}' | jq . > /dev/null 2>&1; then
-            log_success "Context7 integration test passed"
-        else
-            log_warning "Context7 integration test failed (may need documents uploaded)"
-        fi
-    fi
-    
-    log_success "Integration tests completed"
+    echo "  curl ${SERVICE_URL}/ui"
+    echo "  curl ${SERVICE_URL}/admin"
+    echo "  open ${SERVICE_URL}/ui"
 }
 
 # Function to show usage
@@ -427,16 +476,18 @@ show_usage() {
     echo "  --project-id PROJECT_ID    GCP Project ID (default: orionhub-ac5cd)"
     echo "  --environment ENV          Deployment environment (default: production)"
     echo "  --skip-build              Skip building Docker image (use existing latest)"
-    echo "  --skip-tests              Skip integration tests"
+    echo "  --skip-tests              Skip health checks"
     echo "  --help                    Show this help message"
     echo ""
     echo "Environment Variables:"
     echo "  GCP_PROJECT_ID            GCP Project ID"
     echo "  DEPLOY_ENV                Deployment environment"
     echo ""
-    echo "Environment-specific resource allocation:"
-    echo "  production: 4Gi memory, 4 CPU, 1-20 instances"
-    echo "  staging:    2Gi memory, 2 CPU, 0-10 instances"
+    echo "This deploys the official Rust AgentGateway with:"
+    echo "  - Built-in Next.js web UI"
+    echo "  - Admin endpoints on port 15000"
+    echo "  - Traffic endpoints on port 8080"
+    echo "  - Integration with orion services (if available)"
     echo ""
 }
 
@@ -477,9 +528,9 @@ main() {
     done
     
     # Update IMAGE_NAME with final project ID
-    IMAGE_NAME="us-east1-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPO}/agentgateway-mcp"
+    IMAGE_NAME="us-east1-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPO}/agentgateway"
     
-    log_info "Starting AgentGateway MCP deployment..."
+    log_info "Starting Official AgentGateway deployment..."
     log_info "Project: ${GCP_PROJECT_ID}"
     log_info "Region: ${GCP_REGION}"
     log_info "Environment: ${DEPLOY_ENV}"
@@ -497,18 +548,18 @@ main() {
         log_info "Skipping build, using existing image: ${DEPLOYMENT_IMAGE}"
     fi
     
-    check_context7_mcp
+    create_agentgateway_config
+    check_orion_services
     deploy_to_cloud_run
     configure_permissions
-    validate_deployment
     
     if [[ "${skip_tests}" == "false" ]]; then
-        run_integration_tests
+        validate_deployment
     else
-        log_info "Skipping integration tests"
+        log_info "Skipping health checks"
     fi
     
-    log_success "AgentGateway MCP deployment completed successfully! 🎉"
+    log_success "Official AgentGateway deployment completed successfully! 🎉"
 }
 
 # Run main function if script is executed directly

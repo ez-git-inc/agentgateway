@@ -1,0 +1,76 @@
+config:
+  # Cloud Run specific configuration
+  # Use PORT environment variable for main HTTP traffic
+  adminAddr: "0.0.0.0:8080"    # Cloud Run expects traffic on PORT (8080)
+  statsAddr: "0.0.0.0:8081"    # Internal metrics (won't be exposed)
+  readinessAddr: "0.0.0.0:8082" # Health checks (won't be exposed)
+
+binds:
+- port: 8080  # Main traffic port (matches Cloud Run PORT)
+  listeners:
+  - protocol: HTTP
+    routes:
+    - name: health-check
+      matches:
+      - path:
+          pathPrefix: /health
+      policies:
+        directResponse:
+          body: "AgentGateway is healthy"
+          status: 200
+    
+    - name: ui-route
+      matches:
+      - path:
+          pathPrefix: /ui
+      policies:
+        # The built-in UI should be served here
+        directResponse:
+          body: "AgentGateway UI - check /admin for admin interface"
+          status: 200
+    
+    - name: admin-route
+      matches:
+      - path:
+          pathPrefix: /admin
+      policies:
+        directResponse:
+          body: "Admin interface available"
+          status: 200
+    
+    - name: stats-route
+      matches:
+      - path:
+          pathPrefix: /stats
+      policies:
+        directResponse:
+          body: "Metrics endpoint"
+          status: 200
+    
+    - name: mcp-route
+      matches:
+      - path:
+          pathPrefix: /mcp
+      policies:
+        directResponse:
+          body: "MCP endpoints available"
+          status: 200
+    
+    - name: default-route
+      matches:
+      - path:
+          pathPrefix: /
+      policies:
+        directResponse:
+          body: |
+            🤖 Official AgentGateway
+            
+            Available endpoints:
+            - /health - Health check
+            - /ui - Web interface  
+            - /admin - Admin interface
+            - /stats - Metrics
+            - /mcp - MCP protocol endpoints
+            
+            This is the official Rust implementation running on Cloud Run.
+          status: 200

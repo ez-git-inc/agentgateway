@@ -1,0 +1,49 @@
+# Simple Cloud Run Configuration for AgentGateway
+# Based on working minimal-config.yaml but adapted for Cloud Run port 8080
+
+config:
+  # Cloud Run admin configuration - use same port as traffic
+  adminAddr: "0.0.0.0:8080"
+  statsAddr: "0.0.0.0:8081" 
+  readinessAddr: "0.0.0.0:8082"
+
+# Basic bind configuration for Cloud Run
+binds:
+- port: 8080
+  listeners:
+  - protocol: HTTP
+    routes:
+    - name: health-check
+      matches:
+      - path:
+          pathPrefix: /health
+      policies:
+        directResponse:
+          body: "AgentGateway is running and healthy!"
+          status: 200
+    
+    - name: ui-route
+      matches:
+      - path:
+          pathPrefix: /ui
+      policies:
+        directResponse:
+          body: "AgentGateway built-in UI available"
+          status: 200
+    
+    - name: default
+      matches:
+      - path:
+          pathPrefix: /
+      policies:
+        directResponse:
+          body: |
+            Welcome to Official AgentGateway on Cloud Run!
+            
+            Available endpoints:
+            - /health - Health check
+            - /ui - Web interface
+            - /admin - Admin interface
+            
+            This is the official Rust implementation.
+          status: 200

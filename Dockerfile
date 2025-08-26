@@ -65,14 +65,39 @@ RUN --mount=type=cache,target=/app/target \
     mkdir /out && \
     mv /app/target/$(cat /build/target)/${PROFILE}/agentgateway /out
 
-FROM gcr.io/distroless/cc-debian12 AS runner 
+FROM debian:bookworm-slim AS runner 
 
 ARG TARGETARCH
 WORKDIR /app
 
+# Install minimal runtime dependencies including bash for startup script
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    bash \
+    coreutils \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r agentgateway \
+    && useradd -r -g agentgateway agentgateway
+
 COPY --from=builder /out/agentgateway /app/agentgateway
+
+# Add Cloud Run configuration and startup script
+COPY deployment/simple-cloudrun-config.yaml /app/cloudrun-config.yaml
+COPY deployment/docker-entrypoint.sh /app/docker-entrypoint.sh
+
+# Make startup script executable and set ownership
+RUN chmod +x /app/docker-entrypoint.sh && \
+    chown -R agentgateway:agentgateway /app
+
+# Switch to non-root user
+USER agentgateway
+
+# Environment variables for Cloud Run
+ENV CONFIG_FILE_PATH=/app/cloudrun-config.yaml
+ENV PORT=8080
 
 LABEL org.opencontainers.image.source=https://github.com/agentgateway/agentgateway
 LABEL org.opencontainers.image.description="Agentgateway is an open source project that is built on AI-native protocols to connect, secure, and observe agent-to-agent and agent-to-tool communication across any agent framework and environment."
 
-ENTRYPOINT ["/app/agentgateway"]
+# Use startup script as entrypoint for Cloud Run compatibility
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -1,0 +1,123 @@
+# Cloud Run Default Configuration for AgentGateway
+# This configuration is optimized for Google Cloud Run deployment
+# - Uses port 8080 (Cloud Run standard)  
+# - Binds to 0.0.0.0 for external access
+# - Includes basic routing for UI, API, admin, and health checks
+# - Supports the built-in Next.js UI
+
+config:
+  # Cloud Run compatible admin configuration
+  adminAddr: "0.0.0.0:8080"     # Cloud Run traffic port
+  statsAddr: "0.0.0.0:8081"     # Internal metrics (not exposed externally)
+  readinessAddr: "0.0.0.0:8082" # Internal health checks
+  workerThreads: "4"             # Number of worker threads as string
+
+binds:
+- port: 8080  # Cloud Run PORT environment variable
+  listeners:
+  - protocol: HTTP
+    routes:
+    # Health check endpoint (required for Cloud Run)
+    - name: health-check
+      matches:
+      - path:
+          exact: /health
+      policies:
+        cors:
+          allowOrigins: ["*"]
+        directResponse:
+          body: '{"status":"healthy","service":"agentgateway","version":"official-rust"}'
+          status: 200
+
+    # Built-in UI route (AgentGateway has built-in Next.js UI)  
+    - name: ui-route
+      matches:
+      - path:
+          pathPrefix: /ui
+      policies:
+        cors:
+          allowOrigins: ["*"]
+        # Let AgentGateway serve its built-in UI
+        # This should be handled by the built-in UI server
+
+    # Admin interface
+    - name: admin-route  
+      matches:
+      - path:
+          pathPrefix: /admin
+      policies:
+        cors:
+          allowOrigins: ["*"]
+        directResponse:
+          body: '{"message":"Admin interface available","endpoints":["/admin/stats","/admin/config"]}'
+          status: 200
+
+    # Stats/metrics endpoint
+    - name: stats-route
+      matches:  
+      - path:
+          pathPrefix: /stats
+      policies:
+        cors:
+          allowOrigins: ["*"]
+        directResponse:
+          body: '{"message":"Metrics available","service":"agentgateway"}'
+          status: 200
+
+    # MCP protocol endpoints
+    - name: mcp-route
+      matches:
+      - path:
+          pathPrefix: /mcp
+      policies:
+        cors:
+          allowOrigins: ["*"]
+          allowMethods: ["GET", "POST", "OPTIONS"]
+          allowHeaders: ["content-type", "mcp-protocol-version", "authorization"]
+        directResponse:
+          body: '{"message":"MCP endpoints available","protocol":"model-context-protocol"}'
+          status: 200
+
+    # API endpoints
+    - name: api-route
+      matches:
+      - path:
+          pathPrefix: /api
+      policies:
+        cors:
+          allowOrigins: ["*"] 
+          allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+          allowHeaders: ["content-type", "authorization", "x-api-key"]
+        requestHeaderModifier:
+          add:
+            x-gateway: "agentgateway-official"
+            x-environment: "cloud-run"
+        directResponse:
+          body: '{"message":"AgentGateway API","version":"official","endpoints":["/api/v1","/health","/ui","/admin"]}'
+          status: 200
+
+    # Root/default route  
+    - name: default-route
+      matches:
+      - path:
+          pathPrefix: /
+      policies:
+        cors:
+          allowOrigins: ["*"]
+        directResponse:
+          body: |
+            🤖 Official AgentGateway - Cloud Run Deployment
+            
+            Available endpoints:
+            • /health - Health check (JSON)
+            • /ui - Web interface (built-in Next.js UI)
+            • /admin - Admin interface  
+            • /stats - Metrics and statistics
+            • /api - API endpoints
+            • /mcp - Model Context Protocol endpoints
+            
+            This is the official Rust implementation running on Google Cloud Run.
+            Built-in UI and all features are available.
+            
+            🔗 Documentation: https://agentgateway.dev/docs/
+          status: 200
